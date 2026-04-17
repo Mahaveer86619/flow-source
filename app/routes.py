@@ -11,7 +11,15 @@ from typing import List, Optional
 
 import httpx
 import ytmusicapi
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, BackgroundTasks
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -98,16 +106,22 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        if settings.DEBUG:
+            logger.debug("Decoding JWT token")
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
         username: str = payload.get("sub")
         if username is None:
+            logger.warning("JWT token missing 'sub' claim")
             raise credentials_exception
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"JWT validation failed: {e}")
         raise credentials_exception
+
     user = db.query(User).filter(User.username == username).first()
     if user is None:
+        logger.warning(f"User from JWT token not found: {username}")
         raise credentials_exception
     return user
 
@@ -128,8 +142,16 @@ def _require_yt_auth(user: User):
 
 @router.post("/auth/signup", response_model=UserResponse)
 async def signup(user_in: UserCreate, db: Session = Depends(get_db)):
+    if settings.DEBUG:
+        logger.debug(
+            f"Signup attempt for username: {user_in.username}, email: {user_in.email}"
+        )
+    else:
+        logger.info(f"Signup attempt for username: {user_in.username}")
+
     db_user = db.query(User).filter(User.username == user_in.username).first()
     if db_user:
+        logger.warning(f"Signup failed: Username {user_in.username} already registered")
         raise HTTPException(status_code=400, detail="Username already registered")
 
     hashed_password = auth_service.get_password_hash(user_in.password)
@@ -144,6 +166,10 @@ async def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
+    logger.info(
+        f"User signed up successfully: {new_user.username} ({new_user.user_code})"
+    )
+
     response = UserResponse.model_validate(new_user)
     response.has_yt_auth = bool(new_user.yt_auth_json)
     if new_user.settings_json:
@@ -155,15 +181,21 @@ async def signup(user_in: UserCreate, db: Session = Depends(get_db)):
 async def login(
     db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()
 ):
+    if settings.DEBUG:
+        logger.debug(f"Login attempt for username: {form_data.username}")
+
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not auth_service.verify_password(
         form_data.password, user.hashed_password
     ):
+        logger.warning(f"Login failed for username: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    logger.info(f"User logged in successfully: {user.username}")
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth_service.create_access_token(
@@ -253,10 +285,14 @@ async def get_home(
     try:
         proxy_base = get_proxy_base(request)
         # 1. Fetch from Cache (or compute if miss)
-        data = await yt_service.get_home_cached(db, current_user, limit, proxy_base=proxy_base)
+        data = await yt_service.get_home_cached(
+            db, current_user, limit, proxy_base=proxy_base
+        )
 
         # 2. Trigger background warm up for next time (proactive)
-        background_tasks.add_task(yt_service.warm_up_user_cache, db, current_user, proxy_base)
+        background_tasks.add_task(
+            yt_service.warm_up_user_cache, db, current_user, proxy_base
+        )
 
         # For backward compatibility with specific endpoints/legacy parsers
         quick_picks = []
@@ -267,9 +303,13 @@ async def get_home(
 
         for shelf in data.shelves:
             section = shelf.get("section")
-            
+
             # Map songs
-            song_items = [item["data"] for item in shelf.get("items", []) if item["type"] == "song"]
+            song_items = [
+                item["data"]
+                for item in shelf.get("items", [])
+                if item["type"] == "song"
+            ]
             if section == "quickPicks":
                 quick_picks.extend(song_items)
             elif section == "listeningAgain":
@@ -278,10 +318,14 @@ async def get_home(
                 forgotten_favorites.extend(song_items)
             elif section == "musicForYou":
                 music_for_you.extend(song_items)
-            
+
             # Map artists for trendingArtists
             if section == "trending":
-                artist_items = [item["data"] for item in shelf.get("items", []) if item["type"] == "artist"]
+                artist_items = [
+                    item["data"]
+                    for item in shelf.get("items", [])
+                    if item["type"] == "artist"
+                ]
                 trending_artists.extend(artist_items)
 
         data.quickAccess = quick_picks
@@ -290,9 +334,10 @@ async def get_home(
         data.musicForYou = music_for_you
         data.trendingArtists = trending_artists
         data.freshFinds = [
-            item["data"] for shelf in data.shelves 
-            if shelf.get("section") == "freshFinds" 
-            for item in shelf.get("items", []) 
+            item["data"]
+            for shelf in data.shelves
+            if shelf.get("section") == "freshFinds"
+            for item in shelf.get("items", [])
             if item["type"] == "song"
         ]
 
@@ -314,7 +359,9 @@ async def like_artist(channel_id: str, current_user: User = Depends(get_current_
 
 
 @router.post("/artists/{channel_id}/unlike")
-async def unlike_artist(channel_id: str, current_user: User = Depends(get_current_user)):
+async def unlike_artist(
+    channel_id: str, current_user: User = Depends(get_current_user)
+):
     _require_yt_auth(current_user)
     try:
         res = yt_service.get_client(current_user).unsubscribe_artists([channel_id])
@@ -572,19 +619,31 @@ async def get_album(
     try:
         proxy_base = get_proxy_base(request)
         data = yt_service.get_client(current_user).get_album(browseId=browse_id)
-        
+
         # Album tracks often don't have their own thumbnails. Inherit from the album.
         album_thumbnails = data.get("thumbnails") or data.get("thumbnail") or []
         album_thumb_url = None
         if isinstance(album_thumbnails, dict):
             album_thumbnails = album_thumbnails.get("thumbnails", [])
-        if album_thumbnails and isinstance(album_thumbnails, list) and len(album_thumbnails) > 0:
-            album_thumb_url = album_thumbnails[-1].get("url") if isinstance(album_thumbnails[-1], dict) else None
+        if (
+            album_thumbnails
+            and isinstance(album_thumbnails, list)
+            and len(album_thumbnails) > 0
+        ):
+            album_thumb_url = (
+                album_thumbnails[-1].get("url")
+                if isinstance(album_thumbnails[-1], dict)
+                else None
+            )
 
         tracks = data.get("tracks") or []
         for track in tracks:
             # If the track doesn't have thumbnails, inject the album's thumbnail
-            if album_thumb_url and not track.get("thumbnails") and not track.get("thumbnail"):
+            if (
+                album_thumb_url
+                and not track.get("thumbnails")
+                and not track.get("thumbnail")
+            ):
                 track["thumbnails"] = [{"url": album_thumb_url}]
 
         return [s for item in tracks if (s := normalize_song(item, proxy_base))]
@@ -609,17 +668,17 @@ async def get_artist_songs(
         proxy_base = get_proxy_base(request)
         client = yt_service.get_client(current_user)
         artist_data = client.get_artist(channelId=channel_id)
-        
+
         songs_data = artist_data.get("songs", {})
         results = songs_data.get("results", [])
-        
-        # If there's a "browseId" for "All songs", we might want to fetch that, 
+
+        # If there's a "browseId" for "All songs", we might want to fetch that,
         # but for a quick overview, the first few are usually enough.
         # However, to be thorough:
         browse_id = songs_data.get("browseId")
         if browse_id:
             results = client.get_playlist(browse_id).get("tracks", [])
-            
+
         return [s for item in results if (s := normalize_song(item, proxy_base))]
     except Exception as e:
         logger.error(f"Failed to fetch artist songs for {channel_id}: {e}")
@@ -826,9 +885,11 @@ async def update_flow_playlist(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    playlist = db.query(Playlist).filter(
-        Playlist.id == playlist_id, Playlist.owner_id == current_user.id
-    ).first()
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.owner_id == current_user.id)
+        .first()
+    )
     if not playlist:
         raise HTTPException(404, "Playlist not found")
     if req.title is not None:
@@ -857,9 +918,11 @@ async def delete_flow_playlist(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    playlist = db.query(Playlist).filter(
-        Playlist.id == playlist_id, Playlist.owner_id == current_user.id
-    ).first()
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.owner_id == current_user.id)
+        .first()
+    )
     if not playlist:
         raise HTTPException(404, "Playlist not found")
     db.delete(playlist)
@@ -873,23 +936,26 @@ async def add_track_to_flow_playlist(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    playlist = db.query(Playlist).filter(
-        Playlist.id == playlist_id
-    ).first()
+    playlist = db.query(Playlist).filter(Playlist.id == playlist_id).first()
     if not playlist:
         raise HTTPException(404, "Playlist not found")
     # Allow owner and collaborators to add tracks
     is_owner = playlist.owner_id == current_user.id
-    is_collab = db.query(PlaylistCollaborator).filter(
-        PlaylistCollaborator.playlist_id == playlist_id,
-        PlaylistCollaborator.user_id == current_user.id,
-    ).first() is not None
+    is_collab = (
+        db.query(PlaylistCollaborator)
+        .filter(
+            PlaylistCollaborator.playlist_id == playlist_id,
+            PlaylistCollaborator.user_id == current_user.id,
+        )
+        .first()
+        is not None
+    )
     if not is_owner and not is_collab:
         raise HTTPException(403, "Not authorized")
 
-    max_idx = db.query(PlaylistTrack).filter(
-        PlaylistTrack.playlist_id == playlist_id
-    ).count()
+    max_idx = (
+        db.query(PlaylistTrack).filter(PlaylistTrack.playlist_id == playlist_id).count()
+    )
     track = PlaylistTrack(
         playlist_id=playlist_id,
         song_data=json.dumps(req.song_data),
@@ -912,16 +978,23 @@ async def remove_track_from_flow_playlist(
     if not playlist:
         raise HTTPException(404, "Playlist not found")
     is_owner = playlist.owner_id == current_user.id
-    is_collab = db.query(PlaylistCollaborator).filter(
-        PlaylistCollaborator.playlist_id == playlist_id,
-        PlaylistCollaborator.user_id == current_user.id,
-    ).first() is not None
+    is_collab = (
+        db.query(PlaylistCollaborator)
+        .filter(
+            PlaylistCollaborator.playlist_id == playlist_id,
+            PlaylistCollaborator.user_id == current_user.id,
+        )
+        .first()
+        is not None
+    )
     if not is_owner and not is_collab:
         raise HTTPException(403, "Not authorized")
 
-    track = db.query(PlaylistTrack).filter(
-        PlaylistTrack.id == track_id, PlaylistTrack.playlist_id == playlist_id
-    ).first()
+    track = (
+        db.query(PlaylistTrack)
+        .filter(PlaylistTrack.id == track_id, PlaylistTrack.playlist_id == playlist_id)
+        .first()
+    )
     if not track:
         raise HTTPException(404, "Track not found")
     db.delete(track)
@@ -935,9 +1008,11 @@ async def add_collaborator(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    playlist = db.query(Playlist).filter(
-        Playlist.id == playlist_id, Playlist.owner_id == current_user.id
-    ).first()
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.owner_id == current_user.id)
+        .first()
+    )
     if not playlist:
         raise HTTPException(404, "Playlist not found or not owner")
 
@@ -945,10 +1020,14 @@ async def add_collaborator(
     if not target:
         raise HTTPException(404, f"No user with code '{req.user_code}'")
 
-    existing = db.query(PlaylistCollaborator).filter(
-        PlaylistCollaborator.playlist_id == playlist_id,
-        PlaylistCollaborator.user_id == target.id,
-    ).first()
+    existing = (
+        db.query(PlaylistCollaborator)
+        .filter(
+            PlaylistCollaborator.playlist_id == playlist_id,
+            PlaylistCollaborator.user_id == target.id,
+        )
+        .first()
+    )
     if existing:
         return {"status": "already_collaborator"}
 
@@ -960,16 +1039,20 @@ async def add_collaborator(
     return {"status": "added", "user_code": req.user_code}
 
 
-@router.delete("/flow/playlists/{playlist_id}/collaborators/{user_code}", status_code=204)
+@router.delete(
+    "/flow/playlists/{playlist_id}/collaborators/{user_code}", status_code=204
+)
 async def remove_collaborator(
     playlist_id: str,
     user_code: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    playlist = db.query(Playlist).filter(
-        Playlist.id == playlist_id, Playlist.owner_id == current_user.id
-    ).first()
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.owner_id == current_user.id)
+        .first()
+    )
     if not playlist:
         raise HTTPException(404, "Playlist not found or not owner")
 
@@ -977,10 +1060,14 @@ async def remove_collaborator(
     if not target:
         raise HTTPException(404, f"No user with code '{user_code}'")
 
-    collab = db.query(PlaylistCollaborator).filter(
-        PlaylistCollaborator.playlist_id == playlist_id,
-        PlaylistCollaborator.user_id == target.id,
-    ).first()
+    collab = (
+        db.query(PlaylistCollaborator)
+        .filter(
+            PlaylistCollaborator.playlist_id == playlist_id,
+            PlaylistCollaborator.user_id == target.id,
+        )
+        .first()
+    )
     if not collab:
         raise HTTPException(404, "Collaborator not found")
     db.delete(collab)
@@ -1001,13 +1088,21 @@ async def setup_yt_auth(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    logger.info(f"YT auth setup attempt for user: {current_user.username}")
     body = (await request.body()).decode("utf-8").strip()
     if not body:
+        logger.warning(f"YT auth failed for {current_user.username}: Empty body")
         raise HTTPException(400, "Body is empty")
+
+    if settings.DEBUG:
+        logger.debug(f"Processing YT auth headers for {current_user.username}")
 
     headers_raw = curl_to_headers(body) if body.lstrip().startswith("curl") else body
 
     if "cookie" not in headers_raw.lower():
+        logger.warning(
+            f"YT auth failed for {current_user.username}: Missing cookie header"
+        )
         raise HTTPException(
             400,
             "No cookie header found — make sure to include the full headers or cURL command",
@@ -1031,12 +1126,16 @@ async def setup_yt_auth(
             db.commit()
 
             yt_service.clear_cache(current_user.id)
+            logger.info(
+                f"YT auth connected successfully for user: {current_user.username}"
+            )
             return {"status": "ok", "message": "YouTube Music connected successfully"}
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
     except Exception as e:
+        logger.error(f"YT auth setup failed for {current_user.username}: {e}")
         raise HTTPException(400, f"Auth setup failed: {e}")
 
 
@@ -1046,6 +1145,7 @@ async def setup_yt_auth_cookies(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    logger.info(f"YT auth cookie setup attempt for user: {current_user.username}")
     cookie_str = "; ".join(f"{k}={v}" for k, v in payload.cookies.items())
     headers_raw = f"Cookie: {cookie_str}\nX-Goog-AuthUser: 0\n"
     try:
@@ -1061,11 +1161,15 @@ async def setup_yt_auth_cookies(
             db.add(current_user)
             db.commit()
             yt_service.clear_cache(current_user.id)
+            logger.info(
+                f"YT auth cookies connected successfully for user: {current_user.username}"
+            )
             return {"status": "ok", "message": "YouTube Music connected successfully"}
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
     except Exception as e:
+        logger.error(f"YT auth cookie setup failed for {current_user.username}: {e}")
         raise HTTPException(400, f"Auth setup failed: {e}")
 
 
@@ -1073,10 +1177,12 @@ async def setup_yt_auth_cookies(
 async def yt_logout(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
+    logger.info(f"Disconnecting YT auth for user: {current_user.username}")
     current_user.yt_auth_json = None
     db.add(current_user)
     db.commit()
     yt_service.clear_cache(current_user.id)
+    logger.info(f"YT auth disconnected for user: {current_user.username}")
     return {"status": "ok", "message": "YouTube Music disconnected"}
 
 
@@ -1101,6 +1207,7 @@ async def prefetch_audio(
 def track_interaction_background(user_id: int, video_id: str):
     """Background task to track interaction with a new DB session."""
     from .database import SessionLocal
+
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
@@ -1246,28 +1353,24 @@ def _rotate_image_cache():
     try:
         cache_dir = pathlib.Path(settings.IMAGE_CACHE_DIR)
         max_size_bytes = settings.MAX_IMAGE_CACHE_SIZE_MB * 1024 * 1024
-        
+
         # Get all files with their size and last access time
         files = []
         total_size = 0
         for f in cache_dir.glob("*"):
             if f.is_file():
                 stat = f.stat()
-                files.append({
-                    "path": f,
-                    "size": stat.st_size,
-                    "atime": stat.st_atime
-                })
+                files.append({"path": f, "size": stat.st_size, "atime": stat.st_atime})
                 total_size += stat.st_size
-        
+
         if total_size <= max_size_bytes:
             return
 
         # Sort by access time (oldest first)
         files.sort(key=lambda x: x["atime"])
-        
+
         for f in files:
-            if total_size <= max_size_bytes * 0.9: # Give some breathing room
+            if total_size <= max_size_bytes * 0.9:  # Give some breathing room
                 break
             try:
                 f["path"].unlink()
@@ -1275,7 +1378,7 @@ def _rotate_image_cache():
                 logger.debug(f"Cache rotation: Deleted {f['path'].name}")
             except Exception as e:
                 logger.warning(f"Failed to delete {f['path']}: {e}")
-                
+
     except Exception as e:
         logger.error(f"Cache rotation failed: {e}")
 
@@ -1316,7 +1419,9 @@ async def proxy_image(url: str, background_tasks: BackgroundTasks):
         resp = await client.get(decoded_url, headers=headers, timeout=10.0)
 
         if resp.status_code != 200:
-            logger.warning(f"Image proxy fetch failed for {decoded_url}: {resp.status_code}")
+            logger.warning(
+                f"Image proxy fetch failed for {decoded_url}: {resp.status_code}"
+            )
             return Response(status_code=resp.status_code)
 
         content = resp.content

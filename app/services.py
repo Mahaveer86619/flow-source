@@ -19,13 +19,20 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import ArtistResponse, HomeResponse, SongResponse, User, UserSongInteraction, UserRecommendation
+from .models import (
+    ArtistResponse,
+    HomeResponse,
+    SongResponse,
+    User,
+    UserRecommendation,
+    UserSongInteraction,
+)
 from .utils import (
     is_artist_item,
+    normalize_album_as_song,
     normalize_artist,
     normalize_playlist,
     normalize_song,
-    normalize_album_as_song,
     write_cookie_file,
 )
 
@@ -42,16 +49,22 @@ _api_cache = diskcache.Cache(os.path.join("./data", "api_cache"))
 class AuthService:
     @staticmethod
     def verify_password(plain_password, hashed_password):
+        if settings.DEBUG:
+            logger.debug("Verifying password")
         # return pwd_context.verify(plain_password, hashed_password)
         return plain_password == hashed_password
 
     @staticmethod
     def get_password_hash(password):
+        if settings.DEBUG:
+            logger.debug("Hashing password")
         # return pwd_context.hash(password)
         return password
 
     @staticmethod
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+        if settings.DEBUG:
+            logger.debug(f"Creating access token for: {data.get('sub')}")
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
@@ -67,19 +80,27 @@ class AuthService:
     def generate_user_code(username: str, db: Session) -> str:
         """Generate a unique user code like username#1234."""
         import random
-        
+
+        if settings.DEBUG:
+            logger.debug(f"Generating user code for {username}")
+
         # Clean username (remove spaces, etc if needed, but let's keep it simple for now)
         base = username.replace(" ", "").lower()
-        
+
         for _ in range(10):  # Try 10 times to find a unique code
             code = f"{base}#{random.randint(1000, 9999)}"
             # Check DB for uniqueness
             existing = db.query(User).filter(User.user_code == code).first()
             if not existing:
+                if settings.DEBUG:
+                    logger.debug(f"Generated code: {code}")
                 return code
-        
+
         # Fallback to a longer code if collisions persist
-        return f"{base}#{random.randint(100000, 999999)}"
+        fallback_code = f"{base}#{random.randint(100000, 999999)}"
+        if settings.DEBUG:
+            logger.debug(f"Generated fallback code: {fallback_code}")
+        return fallback_code
 
 
 class YTMusicService:
@@ -88,9 +109,18 @@ class YTMusicService:
         self.home_cache = {}
         self.home_cache_ttl = 300
         self._shelf_map = [
-            (["quick pick", "top pick", "start radio", "picks", "suggested"], "quickPicks"),
-            (["listen again", "listening again", "continue", "recent", "replay"], "listeningAgain"),
-            (["fresh find", "new release", "latest", "just out", "new arrival"], "freshFinds"),
+            (
+                ["quick pick", "top pick", "start radio", "picks", "suggested"],
+                "quickPicks",
+            ),
+            (
+                ["listen again", "listening again", "continue", "recent", "replay"],
+                "listeningAgain",
+            ),
+            (
+                ["fresh find", "new release", "latest", "just out", "new arrival"],
+                "freshFinds",
+            ),
             (
                 [
                     "picked for you",
@@ -110,7 +140,17 @@ class YTMusicService:
                 "moodsAndGenres",
             ),
             (["top chart", "trending", "popular", "global", "hits"], "trending"),
-            (["similar to", "related to", "based on", "recommended", "fans", "might also like"], "similarTo"),
+            (
+                [
+                    "similar to",
+                    "related to",
+                    "based on",
+                    "recommended",
+                    "fans",
+                    "might also like",
+                ],
+                "similarTo",
+            ),
             (["artist spotlight", "from your fav"], "artistSpotlight"),
             (["video"], "musicVideos"),
         ]
@@ -124,7 +164,7 @@ class YTMusicService:
                 auth_data = json.loads(user.yt_auth_json)
 
                 # Map common lowercase keys to their expected Title-Case versions
-                # ytmusicapi 1.11.5 determine_auth_type is case-sensitive for 'Authorization' 
+                # ytmusicapi 1.11.5 determine_auth_type is case-sensitive for 'Authorization'
                 # and 'Cookie' when checking for BROWSER type.
                 normalization_map = {
                     "cookie": "Cookie",
@@ -144,15 +184,22 @@ class YTMusicService:
 
                 # Ensure Authorization header is present (Crucial for ytmusicapi 1.11.5)
                 # It uses this to distinguish BROWSER type from OAUTH_CUSTOM_CLIENT.
-                if "Cookie" in normalized_auth and "Authorization" not in normalized_auth:
+                if (
+                    "Cookie" in normalized_auth
+                    and "Authorization" not in normalized_auth
+                ):
                     try:
                         cookie_val = normalized_auth["Cookie"]
                         sapisid = sapisid_from_cookie(cookie_val)
-                        origin = normalized_auth.get("Origin", "https://music.youtube.com")
+                        origin = normalized_auth.get(
+                            "Origin", "https://music.youtube.com"
+                        )
                         normalized_auth["Authorization"] = get_authorization(
                             sapisid + " " + origin
                         )
-                        logger.debug(f"Calculated missing Authorization header for {user.username}")
+                        logger.debug(
+                            f"Calculated missing Authorization header for {user.username}"
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to calculate Authorization header: {e}")
 
@@ -375,8 +422,10 @@ class YTMusicService:
         limit: int = 30,
         proxy_base: Optional[str] = None,
     ) -> HomeResponse:
-        logger.info(f"Building home data (parallel) for user: {user.username if user else 'anon'}")
-        
+        logger.info(
+            f"Building home data (parallel) for user: {user.username if user else 'anon'}"
+        )
+
         try:
             ytm = self.get_client(user)
         except Exception as e:
@@ -385,7 +434,7 @@ class YTMusicService:
 
         # ── Parallel Fetching ───────────────────────────────────────────────────
         # Use asyncio.gather to fetch all shelves in parallel via worker threads
-        
+
         async def fetch_home():
             try:
                 return await run_sync(ytm.get_home, limit)
@@ -416,10 +465,7 @@ class YTMusicService:
 
         # Trigger all calls concurrently
         home_task, liked_task, history_task, trending_task = await asyncio.gather(
-            fetch_home(),
-            fetch_liked(),
-            fetch_history(),
-            fetch_trending()
+            fetch_home(), fetch_liked(), fetch_history(), fetch_trending()
         )
 
         shelves_list = []
@@ -451,7 +497,9 @@ class YTMusicService:
                     try:
                         artist = normalize_artist(item, proxy_base)
                         if artist:
-                            items.append({"type": "artist", "data": artist.model_dump()})
+                            items.append(
+                                {"type": "artist", "data": artist.model_dump()}
+                            )
                     except Exception:
                         pass
                 elif "playlistId" in item or "browseId" in item:
@@ -459,16 +507,20 @@ class YTMusicService:
                     try:
                         playlist = normalize_playlist(item, proxy_base)
                         if playlist:
-                            items.append({
-                                "type": "album" if is_album else "playlist",
-                                "data": playlist.model_dump(),
-                            })
+                            items.append(
+                                {
+                                    "type": "album" if is_album else "playlist",
+                                    "data": playlist.model_dump(),
+                                }
+                            )
                     except Exception:
                         pass
 
             if items:
                 section = self._classify_shelf(title) or "musicForYou"
-                shelves_list.append({"title": title, "section": section, "items": items})
+                shelves_list.append(
+                    {"title": title, "section": section, "items": items}
+                )
 
         # 2. Local RecSys ("Fresh Picks")
         fresh_finds = []
@@ -480,14 +532,26 @@ class YTMusicService:
                 fresh_finds = self.generate_recommendations(db, user, ytm, proxy_base)
 
         # 3. Post-Process Fallbacks
-        quick_picks = [i["data"] for s in shelves_list if s["section"] == "quickPicks" for i in s["items"] if i["type"] == "song"]
+        quick_picks = [
+            i["data"]
+            for s in shelves_list
+            if s["section"] == "quickPicks"
+            for i in s["items"]
+            if i["type"] == "song"
+        ]
         if not quick_picks:
             for item in liked_task.get("tracks", []):
                 song = normalize_song(item, proxy_base)
                 if song:
                     quick_picks.append(song)
 
-        listen_again = [i["data"] for s in shelves_list if s["section"] == "listeningAgain" for i in s["items"] if i["type"] == "song"]
+        listen_again = [
+            i["data"]
+            for s in shelves_list
+            if s["section"] == "listeningAgain"
+            for i in s["items"]
+            if i["type"] == "song"
+        ]
         if not listen_again:
             for item in history_task[:20]:
                 song = normalize_song(item, proxy_base)
@@ -499,51 +563,96 @@ class YTMusicService:
         # 4. Final HomeResponse Construction
         ordered_shelves = []
         if quick_picks:
-            ordered_shelves.append({
-                "title": "Quick picks",
-                "section": "quickPicks",
-                "items": [{"type": "song", "data": s if isinstance(s, dict) else s.model_dump()} for s in quick_picks]
-            })
+            ordered_shelves.append(
+                {
+                    "title": "Quick picks",
+                    "section": "quickPicks",
+                    "items": [
+                        {
+                            "type": "song",
+                            "data": s if isinstance(s, dict) else s.model_dump(),
+                        }
+                        for s in quick_picks
+                    ],
+                }
+            )
         if listen_again:
-            ordered_shelves.append({
-                "title": "Listen again",
-                "section": "listeningAgain",
-                "items": [{"type": "song", "data": s if isinstance(s, dict) else s.model_dump()} for s in listen_again]
-            })
+            ordered_shelves.append(
+                {
+                    "title": "Listen again",
+                    "section": "listeningAgain",
+                    "items": [
+                        {
+                            "type": "song",
+                            "data": s if isinstance(s, dict) else s.model_dump(),
+                        }
+                        for s in listen_again
+                    ],
+                }
+            )
         if fresh_finds:
-            ordered_shelves.append({
-                "title": "Fresh picks for you",
-                "section": "freshFinds",
-                "items": [{"type": "song", "data": s if isinstance(s, dict) else s.model_dump()} for s in fresh_finds]
-            })
+            ordered_shelves.append(
+                {
+                    "title": "Fresh picks for you",
+                    "section": "freshFinds",
+                    "items": [
+                        {
+                            "type": "song",
+                            "data": s if isinstance(s, dict) else s.model_dump(),
+                        }
+                        for s in fresh_finds
+                    ],
+                }
+            )
         if trending:
-            ordered_shelves.append({
-                "title": "Trending",
-                "section": "trending",
-                "items": [{"type": "song", "data": s if isinstance(s, dict) else s.model_dump()} for s in trending]
-            })
+            ordered_shelves.append(
+                {
+                    "title": "Trending",
+                    "section": "trending",
+                    "items": [
+                        {
+                            "type": "song",
+                            "data": s if isinstance(s, dict) else s.model_dump(),
+                        }
+                        for s in trending
+                    ],
+                }
+            )
 
         seen_sections = {"quickPicks", "listeningAgain", "freshFinds", "trending"}
         for s in shelves_list:
             if s["section"] not in seen_sections:
                 ordered_shelves.append(s)
 
-        profile_url = user.yt_avatar_url if user and user.yt_avatar_url else f"https://api.dicebear.com/7.x/avataaars/svg?seed={user.username if user else 'anon'}"
-        
+        profile_url = (
+            user.yt_avatar_url
+            if user and user.yt_avatar_url
+            else f"https://api.dicebear.com/7.x/avataaars/svg?seed={user.username if user else 'anon'}"
+        )
+
         return HomeResponse(
             shelves=ordered_shelves,
             trending=trending,
             profileUrl=profile_url,
             yt_name=user.yt_name if user else None,
-            quickAccess=[s if isinstance(s, SongResponse) else SongResponse.model_validate(s) for s in quick_picks],
-            listeningAgain=[s if isinstance(s, SongResponse) else SongResponse.model_validate(s) for s in listen_again],
-            freshFinds=[s if isinstance(s, SongResponse) else SongResponse.model_validate(s) for s in fresh_finds],
+            quickAccess=[
+                s if isinstance(s, SongResponse) else SongResponse.model_validate(s)
+                for s in quick_picks
+            ],
+            listeningAgain=[
+                s if isinstance(s, SongResponse) else SongResponse.model_validate(s)
+                for s in listen_again
+            ],
+            freshFinds=[
+                s if isinstance(s, SongResponse) else SongResponse.model_validate(s)
+                for s in fresh_finds
+            ],
         )
 
     def get_user_profile(self, user: User) -> dict:
         try:
             ytm = self.get_client(user)
-            # get_account_info() is not a standard ytmusicapi method in all versions, 
+            # get_account_info() is not a standard ytmusicapi method in all versions,
             # but usually available or can be inferred from other calls.
             # In some versions it's get_library_playlists() and checking headers or similar.
             # Let's try to get it via a hack or check official docs.
@@ -556,7 +665,7 @@ class YTMusicService:
                 pass
             except:
                 pass
-            return {"name": user.username, "avatar": None} # Fallback
+            return {"name": user.username, "avatar": None}  # Fallback
         except Exception as e:
             logger.error(f"Failed to get user profile: {e}")
             return {}
@@ -591,11 +700,11 @@ class YTMusicService:
 
         # 3. Build Fresh
         data = await self.build_home_data(db, user, limit, proxy_base)
-        
+
         # Save to both caches
         self.home_cache[cache_key] = {"ts": now, "data": data}
         _api_cache.set(cache_key, data.model_dump(), expire=self.home_cache_ttl)
-        
+
         return data
 
     async def warm_up_user_cache(self, db: Session, user: User, proxy_base: str):
@@ -607,7 +716,9 @@ class YTMusicService:
         except Exception as e:
             logger.error(f"Cache warm up failed for {user.username}: {e}")
 
-    def build_feed_data(self, db: Session, proxy_base: Optional[str] = None) -> HomeResponse:
+    def build_feed_data(
+        self, db: Session, proxy_base: Optional[str] = None
+    ) -> HomeResponse:
         ytm = ytmusicapi.YTMusic()
         trending = self._get_trending_songs(ytm, proxy_base)
         shelves = []
@@ -645,7 +756,9 @@ class YTMusicService:
             trending=trending,
         )
 
-    def get_feed_cached(self, db: Session, proxy_base: Optional[str] = None) -> HomeResponse:
+    def get_feed_cached(
+        self, db: Session, proxy_base: Optional[str] = None
+    ) -> HomeResponse:
         now = time.monotonic()
         cached = self.home_cache.get("feed")
         if cached and cached.get("ts", 0) + self.home_cache_ttl > now:
@@ -824,9 +937,9 @@ async def extract_audio_url(video_id: str, user: Optional[User] = None) -> str:
         # --- CRITICAL FIX: Low-Latency Parallel Extraction ---
         # We spawn multiple extraction strategies in parallel tasks.
         # Python synchronous threads (running yt-dlp) cannot be forcefully killed.
-        # Using anyio.create_task_group() would wait for ALL tasks to finish (even 
+        # Using anyio.create_task_group() would wait for ALL tasks to finish (even
         # the slow failing ones), causing 10-20s latency.
-        # Instead, we use asyncio.wait(FIRST_COMPLETED) to return the FIRST successful 
+        # Instead, we use asyncio.wait(FIRST_COMPLETED) to return the FIRST successful
         # result immediately to the user, ensuring music starts playing within 1-2s.
         result_container = []
         worker_tasks = []
@@ -855,14 +968,14 @@ async def extract_audio_url(video_id: str, user: Optional[User] = None) -> str:
                 worker_tasks, return_when=asyncio.FIRST_COMPLETED
             )
             worker_tasks = list(pending)
-            
+
             if result_container:
-                # SUCCESS: Cancel remaining tasks. Note: yt-dlp threads already 
+                # SUCCESS: Cancel remaining tasks. Note: yt-dlp threads already
                 # inside run_sync will finish in background, but won't block the user.
                 for task in worker_tasks:
                     task.cancel()
                 break
-            
+
             # If all done tasks failed and no result yet, loop again to wait for pending
 
         if result_container:
@@ -919,7 +1032,9 @@ def _single_extract_sync(
         except Exception as fe:
             # If format-specific extraction fails, try one more time with NO format constraint
             # This is slow but better than total failure for this strategy.
-            logger.debug(f"Format-specific extraction failed for {strategy['name']}, trying loose fallback: {fe}")
+            logger.debug(
+                f"Format-specific extraction failed for {strategy['name']}, trying loose fallback: {fe}"
+            )
             loose_opts = ydl_opts.copy()
             loose_opts["format"] = None
             with yt_dlp.YoutubeDL(loose_opts) as ydl:
