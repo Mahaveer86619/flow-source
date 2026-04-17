@@ -1,0 +1,351 @@
+{
+  "info": {
+    "name": "Flow Music API V1",
+    "description": "Comprehensive API documentation for Flow Music V1. Features JWT-based user management with per-user YouTube Music account integration.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "your_jwt_here",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "User Auth",
+      "description": "Endpoints for local user management. Signup and login to receive a JWT.",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"johndoe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"strongpassword123\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/signup",
+            "description": "Register a new user account."
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "username",
+                  "value": "johndoe",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "strongpassword123",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{base_url}}/v1/auth/login",
+            "description": "Exchange credentials for a Bearer JWT. Uses OAuth2 Password Flow (form-data)."
+          }
+        },
+        {
+          "name": "Get Current User (Me)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/auth/me",
+            "description": "Returns details about the currently authenticated user, including 'has_yt_auth' status."
+          }
+        }
+      ]
+    },
+    {
+      "name": "YT Music Connection",
+      "description": "Endpoints for connecting your individual YouTube Music account. Credentials are stored securely in the database for your user account only.",
+      "item": [
+        {
+          "name": "Check Connection Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/yt-status",
+            "description": "Check if your user account is currently connected to YouTube Music."
+          }
+        },
+        {
+          "name": "Setup Connection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "Paste cURL command or raw request headers from YouTube Music here"
+            },
+            "url": "{{base_url}}/v1/yt-auth",
+            "description": "Submit browser headers or a cURL command to link your account with YouTube Music. This will be stored in the database for your user."
+          }
+        },
+        {
+          "name": "Disconnect",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/v1/yt-auth",
+            "description": "Remove your YouTube Music credentials from the database."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Home & Feed",
+      "item": [
+        {
+          "name": "Get Home",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/home?limit=5",
+            "description": "Personalized home shelves (Quick Access, Listening Again, etc.). Requires your account to be connected to YT Music."
+          }
+        },
+        {
+          "name": "Get Home - Quick Access",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/home/quick-access"
+          }
+        },
+        {
+          "name": "Get Feed (Public Trending)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": "{{base_url}}/v1/feed",
+            "description": "Global trending charts and public feed. Does NOT require user login or YT auth."
+          }
+        },
+        {
+          "name": "Clear Your Home Cache",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/v1/home/cache",
+            "description": "Force clear the server-side cache for YOUR home shelves."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search Songs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/search/songs?q=lofi&limit=20",
+              "query": [
+                { "key": "q", "value": "lofi" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Search Suggestions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/v1/search/suggestions?q=never gon",
+              "query": [{ "key": "q", "value": "never gon" }]
+            },
+            "description": "Returns autocomplete suggestions for a partial query."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Library & History",
+      "item": [
+        {
+          "name": "Get Library Playlists",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/library"
+          }
+        },
+        {
+          "name": "Get Listening History",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/history",
+            "description": "Returns YOUR recently played tracks from YouTube Music."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Browsing",
+      "item": [
+        {
+          "name": "Get Playlist Tracks",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/playlists/:playlist_id/tracks",
+            "variable": [{ "key": "playlist_id", "value": "PL..." }]
+          }
+        },
+        {
+          "name": "Get Radio (Up Next)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/radio/:video_id?limit=25",
+            "variable": [{ "key": "video_id", "value": "dQw4w9WgXcQ" }]
+          }
+        },
+        {
+          "name": "Get Album",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/albums/:browse_id",
+            "variable": [{ "key": "browse_id", "value": "MPREb_..." }]
+          }
+        },
+        {
+          "name": "Get Artist Details",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/artists/:channel_id",
+            "variable": [{ "key": "channel_id", "value": "UCiMhD4jzUqG-IgPzUmmytRQ" }],
+            "description": "Get artist profile, top songs, and albums."
+          }
+        },
+        {
+          "name": "Get Song Lyrics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/songs/:video_id/lyrics",
+            "variable": [{ "key": "video_id", "value": "dQw4w9WgXcQ" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Playlist Management",
+      "item": [
+        {
+          "name": "Create Playlist",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Mood Mix\",\n  \"description\": \"Chilled vibes\",\n  \"privacy_status\": \"PRIVATE\",\n  \"video_ids\": [\"dQw4w9WgXcQ\"]\n}"
+            },
+            "url": "{{base_url}}/v1/playlists"
+          }
+        },
+        {
+          "name": "Edit Playlist",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Mood Mix\",\n  \"description\": \"Even more chilled\"\n}"
+            },
+            "url": "{{base_url}}/v1/playlists/:playlist_id",
+            "variable": [{ "key": "playlist_id", "value": "PL..." }]
+          }
+        },
+        {
+          "name": "Add Items to Playlist",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoIds\": [\"dQw4w9WgXcQ\"],\n  \"duplicates\": false\n}"
+            },
+            "url": "{{base_url}}/v1/playlists/:playlist_id/items",
+            "variable": [{ "key": "playlist_id", "value": "PL..." }]
+          }
+        },
+        {
+          "name": "Remove Items from Playlist",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videos\": [\n    {\n      \"videoId\": \"dQw4w9WgXcQ\",\n      \"setVideoId\": \"set_video_id_from_tracks_endpoint\"\n    }\n  ]\n}"
+            },
+            "url": "{{base_url}}/v1/playlists/:playlist_id/items",
+            "variable": [{ "key": "playlist_id", "value": "PL..." }]
+          }
+        },
+        {
+          "name": "Delete Playlist",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/v1/playlists/:playlist_id",
+            "variable": [{ "key": "playlist_id", "value": "PL..." }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Media & Proxy",
+      "item": [
+        {
+          "name": "Stream Audio",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/stream/:video_id",
+            "variable": [{ "key": "video_id", "value": "dQw4w9WgXcQ" }],
+            "description": "Extracts and streams audio directly from YouTube. Supports Range headers."
+          }
+        },
+        {
+          "name": "Proxy Image",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{base_url}}/v1/proxy-image?url=https://lh3.googleusercontent.com/...",
+            "description": "Bypass CORS or referer checks when loading album art in the frontend."
+          }
+        }
+      ]
+    }
+  ]
+}
