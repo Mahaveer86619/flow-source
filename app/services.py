@@ -786,31 +786,29 @@ class YTMusicService:
         else:
             self.home_cache.clear()
 
+    def _oauth_credentials(self):
+        client_id = settings.YT_OAUTH_CLIENT_ID
+        client_secret = settings.YT_OAUTH_CLIENT_SECRET
+        if not client_id or not client_secret:
+            raise ValueError(
+                "YT_OAUTH_CLIENT_ID and YT_OAUTH_CLIENT_SECRET must be set. "
+                "Create a 'TV and Limited Input Devices' OAuth client in Google Cloud "
+                "with YouTube Data API v3 enabled, then set these env vars."
+            )
+        from ytmusicapi.auth.oauth.credentials import OAuthCredentials
+        return OAuthCredentials(client_id, client_secret)
+
     def init_oauth(self):
         """Initialize OAuth flow by getting a device code."""
-        from ytmusicapi.auth.oauth.credentials import OAuthCredentials
-
-        # Well-known YouTube TV client credentials
-        client_id = (
-            "861556724134-92j930kic7id1m9385cl9id1q7mmo26m.apps.googleusercontent.com"
-        )
-        client_secret = "S6f376m8Y_m1v9X0E01R52k1"
-
-        creds = OAuthCredentials(client_id, client_secret)
+        creds = self._oauth_credentials()
         code_dict = creds.get_code()
         return code_dict
 
     def finish_oauth(self, device_code: str):
         """Exchange device code for a token."""
-        from ytmusicapi.auth.oauth.credentials import OAuthCredentials
         from ytmusicapi.auth.oauth.token import RefreshingToken
 
-        client_id = (
-            "861556724134-92j930kic7id1m9385cl9id1q7mmo26m.apps.googleusercontent.com"
-        )
-        client_secret = "S6f376m8Y_m1v9X0E01R52k1"
-
-        creds = OAuthCredentials(client_id, client_secret)
+        creds = self._oauth_credentials()
         try:
             token_dict = creds.token_from_code(device_code)
             # Create a RefreshingToken object to get the full JSON structure

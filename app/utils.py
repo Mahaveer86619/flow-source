@@ -309,19 +309,25 @@ def write_cookie_file(auth_data: str | dict, cookie_file: str) -> bool:
                 if not pair or "=" not in pair:
                     continue
                 name, value = pair.split("=", 1)
-                name = name.strip()
-                value = value.strip()
+                # Sanitize: strip whitespace and remove any control chars that would
+                # break the tab-delimited Netscape format (newlines split the line,
+                # tabs corrupt the field boundaries).
+                name = name.strip().replace("\n", "").replace("\r", "").replace("\t", "")
+                value = value.strip().replace("\n", "").replace("\r", "").replace("\t", "")
                 if not name:
                     continue
 
-                # __Host- cookies must be for the exact host (no leading dot)
+                # __Host- cookies must be scoped to the exact host (no leading dot,
+                # no subdomain wildcard).
                 if name.startswith("__Host-"):
-                    for domain in ["youtube.com", "music.youtube.com", "google.com"]:
+                    for domain in ["youtube.com", "google.com"]:
                         f.write(
                             f"{domain}\tFALSE\t/\tTRUE\t{expiry}\t{name}\t{value}\n"
                         )
                 else:
-                    for domain in [".youtube.com", ".music.youtube.com", ".google.com"]:
+                    # .youtube.com already covers music.youtube.com — writing the
+                    # subdomain separately confuses some cookie parsers.
+                    for domain in [".youtube.com", ".google.com"]:
                         f.write(f"{domain}\tTRUE\t/\tTRUE\t{expiry}\t{name}\t{value}\n")
                 count += 1
 

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     AUTH_FILE_PATH: str = "./data/auth.json"
     COOKIES_FILE_PATH: str = "./data/cookies.txt"
 
+    # YouTube OAuth client (TV & Limited Input Devices type, YouTube Data API v3 enabled)
+    YT_OAUTH_CLIENT_ID: Optional[str] = None
+    YT_OAUTH_CLIENT_SECRET: Optional[str] = None
+
     # Database Settings
     DATABASE_URL: str = "sqlite:///./data/flow_music.db"
 
