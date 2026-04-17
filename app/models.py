@@ -2,7 +2,16 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, Float
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Float,
+)
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -15,7 +24,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
-    user_code = Column(String, unique=True, index=True) # e.g. username#1234
+    user_code = Column(String, unique=True, index=True)  # e.g. username#1234
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     is_active = Column(Boolean, default=True)
@@ -46,20 +55,24 @@ class User(Base):
 class Playlist(Base):
     __tablename__ = "playlists"
 
-    id = Column(String, primary_key=True, index=True) # UUID
+    id = Column(String, primary_key=True, index=True)  # UUID
     title = Column(String, index=True)
     description = Column(Text, nullable=True)
     thumbnail_url = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"))
-    yt_playlist_id = Column(String, nullable=True) # For syncing
+    yt_playlist_id = Column(String, nullable=True)  # For syncing
     is_public = Column(Boolean, default=False)
-    type = Column(String, default="flow") # 'flow' or 'yt'
+    type = Column(String, default="flow")  # 'flow' or 'yt'
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="playlists")
-    tracks = relationship("PlaylistTrack", back_populates="playlist", cascade="all, delete-orphan")
-    collaborators = relationship("PlaylistCollaborator", back_populates="playlist", cascade="all, delete-orphan")
+    tracks = relationship(
+        "PlaylistTrack", back_populates="playlist", cascade="all, delete-orphan"
+    )
+    collaborators = relationship(
+        "PlaylistCollaborator", back_populates="playlist", cascade="all, delete-orphan"
+    )
 
 
 class PlaylistTrack(Base):
@@ -67,7 +80,7 @@ class PlaylistTrack(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     playlist_id = Column(String, ForeignKey("playlists.id", ondelete="CASCADE"))
-    song_data = Column(Text) # JSON blob of normalize_song output
+    song_data = Column(Text)  # JSON blob of normalize_song output
     sort_index = Column(Integer, default=0)
     added_at = Column(DateTime, default=datetime.utcnow)
 
@@ -80,7 +93,7 @@ class PlaylistCollaborator(Base):
     id = Column(Integer, primary_key=True, index=True)
     playlist_id = Column(String, ForeignKey("playlists.id", ondelete="CASCADE"))
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    role = Column(String, default="editor") # 'editor' or 'viewer'
+    role = Column(String, default="editor")  # 'editor' or 'viewer'
     added_at = Column(DateTime, default=datetime.utcnow)
 
     playlist = relationship("Playlist", back_populates="collaborators")
@@ -259,6 +272,19 @@ class YTCookiesPayload(BaseModel):
     cookies: Dict[str, str]
 
 
+class YTOAuthResponse(BaseModel):
+    device_code: str
+    user_code: str
+    verification_url: str
+    expires_in: int
+    interval: int
+
+
+class YTOAuthStatus(BaseModel):
+    status: str  # 'pending', 'success', 'declined', 'expired'
+    message: str
+
+
 # --- Flow Playlist Request Models ---
 
 
@@ -266,6 +292,16 @@ class FlowPlaylistCreateRequest(BaseModel):
     title: str
     description: str = ""
     is_public: bool = False
+
+
+class FlowPlaylistUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+class FlowPlaylistAddTrackRequest(BaseModel):
+    """song_data is a SongResponse-shaped dict — stored as JSON."""
 
 
 class FlowPlaylistUpdateRequest(BaseModel):

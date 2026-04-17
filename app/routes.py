@@ -71,6 +71,8 @@ logger = logging.getLogger("flow.routes")
 
 @router.get("/health")
 async def health_check():
+    if settings.DEBUG:
+        logger.debug("Health check")
     return {"status": "ok"}
 
 
@@ -622,7 +624,7 @@ async def get_radio(
         tracks = data.get("tracks") or []
         return [s for item in tracks if (s := normalize_song(item, proxy_base))]
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "fetching radio")
 
 
 @router.get("/albums/{browse_id}", response_model=List[SongResponse])
@@ -665,8 +667,7 @@ async def get_album(
 
         return [s for item in tracks if (s := normalize_song(item, proxy_base))]
     except Exception as e:
-        logger.exception(f"Failed to fetch album {browse_id}: {e}")
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, f"fetching album {browse_id}")
 
 
 @router.get("/artists/{channel_id}")
@@ -674,7 +675,7 @@ async def get_artist(channel_id: str, current_user: User = Depends(get_current_u
     try:
         return yt_service.get_client(current_user).get_artist(channelId=channel_id)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, f"fetching artist {channel_id}")
 
 
 @router.get("/artists/{channel_id}/songs", response_model=List[SongResponse])
@@ -698,8 +699,9 @@ async def get_artist_songs(
 
         return [s for item in results if (s := normalize_song(item, proxy_base))]
     except Exception as e:
-        logger.error(f"Failed to fetch artist songs for {channel_id}: {e}")
-        return []
+        _handle_yt_error(
+            e, current_user.username, f"fetching artist songs for {channel_id}"
+        )
 
 
 @router.get("/songs/lyrics/{video_id}")
@@ -712,7 +714,7 @@ async def get_lyrics(video_id: str, current_user: User = Depends(get_current_use
             return {"lyrics": None}
         return client.get_lyrics(lyrics_id)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, f"fetching lyrics for {video_id}")
 
 
 @router.get("/songs/batch", response_model=List[SongResponse])
@@ -762,10 +764,7 @@ async def get_songs_batch(
         results = await asyncio.gather(*tasks)
         return [r for r in results if r is not None]
     except Exception as e:
-        logger.exception(
-            f"Error in get_songs_batch for user {current_user.username}: {e}"
-        )
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "batch fetching songs")
 
 
 # --- Playlist Management Endpoints ---
@@ -786,7 +785,7 @@ async def create_playlist(
         )
         return {"id": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "creating playlist")
 
 
 @router.patch("/playlists/{playlist_id}")
@@ -808,7 +807,7 @@ async def edit_playlist(
         )
         return {"status": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "editing playlist")
 
 
 @router.delete("/playlists/{playlist_id}")
@@ -822,7 +821,7 @@ async def delete_playlist(
         )
         return {"status": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "deleting playlist")
 
 
 @router.post("/playlists/{playlist_id}/items")
@@ -841,7 +840,7 @@ async def add_playlist_items(
         )
         return {"status": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "adding items to playlist")
 
 
 @router.delete("/playlists/{playlist_id}/items")
@@ -857,7 +856,7 @@ async def remove_playlist_items(
         )
         return {"status": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "removing items from playlist")
 
 
 # --- Flow Playlist CRUD ---
