@@ -285,6 +285,23 @@ class YTOAuthStatus(BaseModel):
     message: str
 
 
+# --- Server Browser Models ---
+
+class BrowserTapRequest(BaseModel):
+    x: float  # 0.0–1.0 fraction of viewport width
+    y: float  # 0.0–1.0 fraction of viewport height
+
+class BrowserTypeRequest(BaseModel):
+    text: str
+
+class BrowserKeyRequest(BaseModel):
+    key: str  # e.g. "Enter", "Backspace", "Tab"
+
+class BrowserFrameResponse(BaseModel):
+    screenshot: str  # base64 PNG
+    is_active: bool
+
+
 # --- Flow Playlist Request Models ---
 
 

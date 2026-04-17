@@ -53,10 +53,15 @@ from .models import (
     UserLogin,
     UserResponse,
     UserSettingsUpdate,
+    BrowserFrameResponse,
+    BrowserKeyRequest,
+    BrowserTapRequest,
+    BrowserTypeRequest,
     YTCookiesPayload,
     YTOAuthResponse,
     YTOAuthStatus,
 )
+from .browser_session import browser_session
 from .services import auth_service, extract_audio_url, yt_service
 from .utils import (
     curl_to_headers,
@@ -1523,4 +1528,102 @@ async def proxy_image(url: str, background_tasks: BackgroundTasks):
         )
     except Exception as e:
         logger.error(f"Image proxy exception for {url}: {e}")
-        raise HTTPException(500, f"Image proxy failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Server-side browser control  (admin — any authenticated user)
+# Lets the app drive a headless Chromium running on the server so that the
+# resulting cookies are issued to the server's IP and work with yt-dlp.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/admin/browser/start", response_model=BrowserFrameResponse)
+async def browser_start(current_user: User = Depends(get_current_user)):
+    """Start (or resume) a headless Chromium at the YouTube/Google login page."""
+    logger.info(f"Browser session start requested by {current_user.username}")
+    try:
+        screenshot = await browser_session.start(
+            "https://accounts.google.com/ServiceLogin?service=youtube"
+        )
+        return BrowserFrameResponse(screenshot=screenshot, is_active=True)
+    except Exception as e:
+        logger.error(f"Browser start failed: {e}")
+        raise HTTPException(500, f"Browser start failed: {e}")
+
+
+@router.get("/admin/browser/frame", response_model=BrowserFrameResponse)
+async def browser_frame(current_user: User = Depends(get_current_user)):
+    """Return a fresh screenshot of the current browser page."""
+    if not browser_session.is_active:
+        return BrowserFrameResponse(screenshot="", is_active=False)
+    try:
+        screenshot = await browser_session.screenshot()
+        return BrowserFrameResponse(screenshot=screenshot, is_active=True)
+    except Exception as e:
+        logger.error(f"Browser screenshot failed: {e}")
+        raise HTTPException(500, f"Screenshot failed: {e}")
+
+
+@router.post("/admin/browser/tap", response_model=BrowserFrameResponse)
+async def browser_tap(
+    req: BrowserTapRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Click at fractional coordinates (0–1) in the browser viewport."""
+    try:
+        screenshot = await browser_session.tap(req.x, req.y)
+        return BrowserFrameResponse(screenshot=screenshot, is_active=True)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/browser/type", response_model=BrowserFrameResponse)
+async def browser_type(
+    req: BrowserTypeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Type text into the focused browser element."""
+    try:
+        screenshot = await browser_session.type_text(req.text)
+        return BrowserFrameResponse(screenshot=screenshot, is_active=True)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/browser/key", response_model=BrowserFrameResponse)
+async def browser_key(
+    req: BrowserKeyRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Send a special key (Enter, Backspace, Tab, …) to the browser."""
+    try:
+        screenshot = await browser_session.key_press(req.key)
+        return BrowserFrameResponse(screenshot=screenshot, is_active=True)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/browser/save")
+async def browser_save(current_user: User = Depends(get_current_user)):
+    """Save cookies from the current browser session to the server's cookies.txt."""
+    try:
+        count = await browser_session.save_cookies(settings.COOKIES_FILE_PATH)
+        logger.info(f"Browser cookies saved by {current_user.username}: {count} cookies")
+        return {"status": "ok", "message": f"Saved {count} cookies", "count": count}
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Browser save failed: {e}")
+        raise HTTPException(500, f"Save failed: {e}")
+
+
+@router.delete("/admin/browser/stop")
+async def browser_stop(current_user: User = Depends(get_current_user)):
+    """Stop the browser session without saving cookies."""
+    await browser_session.stop()
+    return {"status": "ok", "message": "Browser stopped"}

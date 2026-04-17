@@ -893,11 +893,17 @@ async def extract_audio_url(video_id: str, user: Optional[User] = None) -> str:
             if not write_cookie_file(user.yt_auth_json, user_cookie_path):
                 user_cookie_path = None
 
-        global_cookie_path = (
-            settings.COOKIES_FILE_PATH
-            if os.path.exists(settings.COOKIES_FILE_PATH)
-            else None
-        )
+        global_cookie_path = None
+        if os.path.exists(settings.COOKIES_FILE_PATH):
+            try:
+                with open(settings.COOKIES_FILE_PATH, "r", encoding="utf-8") as _f:
+                    _first = _f.readline().strip()
+                if _first.startswith("# Netscape HTTP Cookie File") or _first.startswith("# HTTP Cookie File"):
+                    global_cookie_path = settings.COOKIES_FILE_PATH
+                else:
+                    logger.warning("Global cookies.txt is not Netscape format — skipping")
+            except Exception:
+                pass
 
         def get_cp(ctype):
             if ctype == "user":

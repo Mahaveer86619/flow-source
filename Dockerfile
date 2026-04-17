@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Always upgrade yt-dlp to latest to avoid YouTube bot-detection breakage
 RUN pip install --upgrade yt-dlp
 
+# Install Playwright Chromium for server-side browser login
+RUN playwright install chromium --with-deps
+
 # Copy application code
 COPY . .
 
