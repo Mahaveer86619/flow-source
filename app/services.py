@@ -108,6 +108,8 @@ class YTMusicService:
         # We no longer rely on a global settings.AUTH_FILE_PATH for all requests
         self.home_cache = {}
         self.home_cache_ttl = 300
+        # Temporary storage for pending OAuth flows: {device_code: (user_id, expiry)}
+        self.pending_oauth = {}
         self._shelf_map = [
             (
                 ["quick pick", "top pick", "start radio", "picks", "suggested"],
@@ -163,9 +165,19 @@ class YTMusicService:
                 logger.debug(f"Creating authenticated client for user: {user.username}")
                 auth_data = json.loads(user.yt_auth_json)
 
+                # ── 1. Check for OAuth Token ──
+                # OAuth tokens are JSON dicts with 'token', 'refresh_token', etc.
+                if "refresh_token" in auth_data:
+                    logger.debug(f"Using OAuth authentication for {user.username}")
+                    # ytmusicapi handles OAuth dicts directly
+                    client = ytmusicapi.YTMusic(auth=auth_data)
+                    return client
+
+                # ── 2. Fallback to Cookie-based Auth ──
                 # Map common lowercase keys to their expected Title-Case versions
                 # ytmusicapi 1.11.5 determine_auth_type is case-sensitive for 'Authorization'
                 # and 'Cookie' when checking for BROWSER type.
+...
                 normalization_map = {
                     "cookie": "Cookie",
                     "user-agent": "User-Agent",
@@ -774,6 +786,46 @@ class YTMusicService:
                 del self.home_cache[cache_key]
         else:
             self.home_cache.clear()
+
+    def init_oauth(self):
+        """Initialize OAuth flow by getting a device code."""
+        from ytmusicapi.auth.oauth.credentials import OAuthCredentials
+
+        # Well-known YouTube TV client credentials
+        client_id = (
+            "861556724134-92j930kic7id1m9385cl9id1q7mmo26m.apps.googleusercontent.com"
+        )
+        client_secret = "S6f376m8Y_m1v9X0E01R52k1"
+
+        creds = OAuthCredentials(client_id, client_secret)
+        code_dict = creds.get_code()
+        return code_dict
+
+    def finish_oauth(self, device_code: str):
+        """Exchange device code for a token."""
+        from ytmusicapi.auth.oauth.credentials import OAuthCredentials
+        from ytmusicapi.auth.oauth.token import RefreshingToken
+
+        client_id = (
+            "861556724134-92j930kic7id1m9385cl9id1q7mmo26m.apps.googleusercontent.com"
+        )
+        client_secret = "S6f376m8Y_m1v9X0E01R52k1"
+
+        creds = OAuthCredentials(client_id, client_secret)
+        try:
+            token_dict = creds.token_from_code(device_code)
+            # Create a RefreshingToken object to get the full JSON structure
+            token = RefreshingToken(
+                token=token_dict["access_token"],
+                refresh_token=token_dict["refresh_token"],
+                expires_in=token_dict["expires_in"],
+                credentials=creds,
+            )
+            return token.as_dict()
+        except Exception as e:
+            if "authorization_pending" in str(e):
+                return None
+            raise e
 
 
 # Global cache for extracted audio URLs to avoid slow yt-dlp calls on every request.

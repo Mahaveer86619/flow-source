@@ -1202,6 +1202,68 @@ async def yt_logout(
     return {"status": "ok", "message": "YouTube Music disconnected"}
 
 
+@router.post("/yt-auth/oauth/init", response_model=YTOAuthResponse)
+async def init_yt_oauth(current_user: User = Depends(get_current_user)):
+    """Initialize the YT Music OAuth flow on the server."""
+    logger.info(f"Initializing YT OAuth for user: {current_user.username}")
+    try:
+        code_dict = yt_service.init_oauth()
+        # code_dict contains: device_code, user_code, verification_url, expires_in, interval
+
+        # Store for verification later
+        yt_service.pending_oauth[code_dict["device_code"]] = {
+            "user_id": current_user.id,
+            "expiry": time.time() + code_dict["expires_in"],
+        }
+
+        return YTOAuthResponse(**code_dict)
+    except Exception as e:
+        logger.error(f"Failed to init YT OAuth for {current_user.username}: {e}")
+        raise HTTPException(500, f"OAuth initialization failed: {e}")
+
+
+@router.get("/yt-auth/oauth/check/{device_code}", response_model=YTOAuthStatus)
+async def check_yt_oauth(
+    device_code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Check if the user has completed the OAuth flow."""
+    pending = yt_service.pending_oauth.get(device_code)
+    if not pending or pending["user_id"] != current_user.id:
+        return YTOAuthStatus(
+            status="expired", message="OAuth session not found or expired"
+        )
+
+    if time.time() > pending["expiry"]:
+        del yt_service.pending_oauth[device_code]
+        return YTOAuthStatus(status="expired", message="OAuth session expired")
+
+    try:
+        token_data = yt_service.finish_oauth(device_code)
+        if token_data:
+            # Success!
+            current_user.yt_auth_json = json.dumps(token_data)
+            db.add(current_user)
+            db.commit()
+
+            del yt_service.pending_oauth[device_code]
+            yt_service.clear_cache(current_user.id)
+
+            logger.info(f"YT OAuth completed successfully for {current_user.username}")
+            return YTOAuthStatus(
+                status="success", message="YouTube Music connected successfully"
+            )
+        else:
+            return YTOAuthStatus(
+                status="pending", message="Waiting for authorization..."
+            )
+
+    except Exception as e:
+        logger.error(f"Error checking YT OAuth for {current_user.username}: {e}")
+        return YTOAuthStatus(status="declined", message=f"Authorization failed: {e}")
+
+
 # --- Streaming & Proxy ---
 
 

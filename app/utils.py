@@ -16,11 +16,11 @@ def fix_thumbnail_url(
     """Normalise a YouTube/Google thumbnail URL to a consistent size and aspect ratio."""
     if not url:
         return None
-    
+
     # Handle Google User Content (lh3.googleusercontent.com, yt3.ggpht.com)
     if "googleusercontent.com" in url or "ggpht.com" in url:
         if is_video:
-            # For videos, we might want a rectangular crop if available, 
+            # For videos, we might want a rectangular crop if available,
             # but usually these are square source images.
             # If we want 16:9 from googleusercontent, it's tricky.
             # We'll stick to a high res square or the original if it's already rectangular.
@@ -38,13 +38,21 @@ def fix_thumbnail_url(
     if "i.ytimg.com" in url:
         if is_video:
             # Keep 16:9 for videos
-            url = re.sub(r"/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg", "/hq720.jpg", url)
+            url = re.sub(
+                r"/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg",
+                "/hq720.jpg",
+                url,
+            )
         else:
             # Force square for songs if it's a ytimg URL (rare for songs, but happens)
-            # Actually, ytimg URLs are almost always 16:9. 
+            # Actually, ytimg URLs are almost always 16:9.
             # If it's a song, we prefer the hqdefault which is often padded but "squarer" in intent
             # or we let the frontend handle the center-crop.
-            url = re.sub(r"/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg", "/hqdefault.jpg", url)
+            url = re.sub(
+                r"/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg",
+                "/hqdefault.jpg",
+                url,
+            )
         return url
 
     return url
@@ -62,7 +70,7 @@ def normalize_song(
     vtype = item.get("videoType") or item.get("type") or item.get("resultType") or ""
     if isinstance(vtype, str):
         vtype = vtype.lower()
-        if "video" in vtype or vtype == "omv": # OMV = Official Music Video
+        if "video" in vtype or vtype == "omv":  # OMV = Official Music Video
             is_video = True
 
     artists = item.get("artists") or []
@@ -113,7 +121,7 @@ def normalize_song(
         durationMs=int(duration_seconds) * 1000,
         thumbnailUrl=fix_thumbnail_url(raw_url, proxy_base, is_video=is_video),
         isVideo=is_video,
-        aspectRatio=1.77 if is_video else 1.0
+        aspectRatio=1.77 if is_video else 1.0,
     )
 
 
@@ -265,6 +273,12 @@ def write_cookie_file(auth_data: str | dict, cookie_file: str) -> bool:
                     data = {"Cookie": auth_data}
         else:
             data = dict(auth_data)
+
+        # ── OAuth Check ──
+        # If this is an OAuth token (has refresh_token), it's not a cookie list.
+        # yt-dlp doesn't support using these as cookie files.
+        if "refresh_token" in data:
+            return False
 
         # ytmusicapi auth JSON uses "Cookie" header key (case-sensitive)
         cookie_str = (
