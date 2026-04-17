@@ -54,6 +54,8 @@ from .models import (
     UserResponse,
     UserSettingsUpdate,
     YTCookiesPayload,
+    YTOAuthResponse,
+    YTOAuthStatus,
 )
 from .services import auth_service, extract_audio_url, yt_service
 from .utils import (
