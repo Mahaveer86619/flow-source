@@ -137,6 +137,21 @@ def _require_yt_auth(user: User):
             )
 
 
+def _handle_yt_error(e: Exception, username: str, context: str = "operation"):
+    """Handle common ytmusicapi errors and return appropriate HTTP exceptions."""
+    err_msg = str(e)
+    if "Sign in" in err_msg or "twoColumnBrowseResultsRenderer" in err_msg:
+        logger.warning(
+            f"YT Music session expired for {username} during {context}: {err_msg}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="YouTube Music session expired. Please reconnect your account.",
+        )
+    logger.error(f"YT Music {context} failed for {username}: {e}")
+    raise HTTPException(500, err_msg)
+
+
 # --- User Management Endpoints ---
 
 
@@ -355,7 +370,7 @@ async def like_artist(channel_id: str, current_user: User = Depends(get_current_
         res = yt_service.get_client(current_user).subscribe_artists([channel_id])
         return {"status": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "liking artist")
 
 
 @router.post("/artists/{channel_id}/unlike")
@@ -367,7 +382,7 @@ async def unlike_artist(
         res = yt_service.get_client(current_user).unsubscribe_artists([channel_id])
         return {"status": res}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "unliking artist")
 
 
 @router.get("/home/quick-access", response_model=List[SongResponse])
@@ -430,7 +445,7 @@ async def search_songs(
         )
         return [s for item in results if (s := normalize_song(item, proxy_base))]
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, f"searching for '{q}'")
 
 
 @router.get("/search/suggestions")
@@ -440,7 +455,7 @@ async def get_search_suggestions(
     try:
         return yt_service.get_client(current_user).get_search_suggestions(q)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "fetching search suggestions")
 
 
 # --- Library & History Endpoints ---
@@ -480,7 +495,7 @@ async def get_library(
 
         return LibraryResponse(playlists=flow_playlists + yt_playlists)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "fetching library")
 
 
 @router.get("/history/yt", response_model=List[SongResponse])
@@ -493,7 +508,7 @@ async def get_yt_history(
         raw = yt_service.get_client(current_user).get_history()
         return [s for item in raw if (s := normalize_song(item, proxy_base))]
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(e, current_user.username, "fetching history")
 
 
 @router.post("/history", response_model=SongResponse)
@@ -587,7 +602,9 @@ async def get_playlist_tracks(
         tracks = data.get("tracks") or []
         return [s for item in tracks if (s := normalize_song(item, proxy_base))]
     except Exception as e:
-        raise HTTPException(500, str(e))
+        _handle_yt_error(
+            e, current_user.username, f"fetching tracks for playlist {playlist_id}"
+        )
 
 
 @router.get("/radio/{video_id}")
