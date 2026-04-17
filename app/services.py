@@ -177,7 +177,6 @@ class YTMusicService:
                 # Map common lowercase keys to their expected Title-Case versions
                 # ytmusicapi 1.11.5 determine_auth_type is case-sensitive for 'Authorization'
                 # and 'Cookie' when checking for BROWSER type.
-...
                 normalization_map = {
                     "cookie": "Cookie",
                     "user-agent": "User-Agent",
